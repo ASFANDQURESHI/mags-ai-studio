@@ -7,29 +7,180 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  username  String   @unique
-  password  String
-  firstName String?
-  lastName  String?
-  avatar    String?
-  bio       String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ============================================================================
+// PHASE 3: Authentication & RBAC System
+// ============================================================================
 
+model User {
+  id            String        @id @default(cuid())
+  email         String        @unique @db.VarChar(255)
+  username      String        @unique @db.VarChar(50)
+  password      String        @db.Text // Hashed with bcrypt
+  firstName     String?       @db.VarChar(100)
+  lastName      String?       @db.VarChar(100)
+  avatar        String?       @db.Text
+  bio           String?       @db.Text
+  phone         String?       @db.VarChar(20)
+  emailVerified Boolean       @default(false)
+  isActive      Boolean       @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  userRoles      UserRole[]    @relation("UserRoles")
+  sessions       Session[]     @relation("UserSessions")
+  refreshTokens  RefreshToken[] @relation("UserRefreshTokens")
+  auditLogs      AuditLog[]    @relation("UserAuditLogs")
+  passwordResets PasswordReset[] @relation("UserPasswordResets")
+
+  @@index([email])
+  @@index([username])
+  @@index([isActive])
   @@map("users")
 }
 
-model Session {
-  id        String   @id @default(cuid())
-  token     String   @unique
-  userId    String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique @db.VarChar(50)
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
+  // Relations
+  userRoles      UserRole[]    @relation("RoleUsers")
+  permissions    RolePermission[] @relation("RolePermissions")
+
+  @@index([name])
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.Text
+  category    String   @db.VarChar(50)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  rolePermissions RolePermission[] @relation("PermissionRoles")
+
+  @@index([category])
+  @@map("permissions")
+}
+
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String
+  roleId    String
+  assignedAt DateTime @default(now())
+  assignedBy String?
+  expiresAt DateTime?
+
+  // Relations
+  user      User     @relation("UserRoles", fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation("RoleUsers", fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String   @id @default(cuid())
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  // Relations
+  role       Role       @relation("RolePermissions", fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation("PermissionRoles", fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model Session {
+  id            String   @id @default(cuid())
+  userId        String
+  token         String   @unique @db.Text
+  ipAddress     String?  @db.VarChar(45)
+  userAgent     String?  @db.Text
+  expiresAt     DateTime
+  lastActivityAt DateTime @default(now())
+  isRevoked     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user          User     @relation("UserSessions", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@index([isRevoked])
   @@map("sessions")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique @db.Text
+  expiresAt DateTime
+  rotatedAt DateTime?
+  revokedAt DateTime?
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relations
+  user      User     @relation("UserRefreshTokens", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@index([isRevoked])
+  @@map("refresh_tokens")
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique @db.Text
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  // Relations
+  user      User     @relation("UserPasswordResets", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("password_resets")
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  action       String   @db.VarChar(100)
+  resourceType String?  @db.VarChar(50)
+  resourceId   String?  @db.VarChar(255)
+  changes      Json?
+  ipAddress    String?  @db.VarChar(45)
+  userAgent    String?  @db.Text
+  status       String   @db.VarChar(20) @default("SUCCESS")
+  errorMessage String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  // Relations
+  user         User?    @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([resourceType])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
